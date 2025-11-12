@@ -42,6 +42,33 @@ static void print_array(int n,
 
 #include <omp.h>
 
+#ifdef GPU
+#define NTHREAD_GPU 128
+void kernel_lu(int n, DATA_TYPE A[n][n])
+{
+  int k, i, j;
+
+  //Mappo una sola volta sia in entrata nella gpu che in uscita
+  #pragma omp target data map(tofrom: A[0:n][0:n])
+  {
+    for (k = 0; k < n; ++k)
+    {
+
+      #pragma omp target teams distribute parallel for  num_teams((n + NTHREAD_GPU - 1)/NTHREAD_GPU) thread_limit(256)
+      for (j = k + 1; j < n; ++j) 
+        A[k][j] = A[k][j] / A[k][k];
+      
+    
+      #pragma omp target teams distribute parallel  for collapse(2)  num_teams((n + NTHREAD_GPU - 1)/NTHREAD_GPU) thread_limit(256)
+      for (i = k + 1; i < n; ++i) 
+        for (j = k + 1; j < n; ++j) 
+          A[i][j] = A[i][j] - A[i][k] * A[k][j];
+        
+    }
+  } 
+}
+#endif
+
 #ifdef STATIC
 static void kernel_lu(int n, DATA_TYPE POLYBENCH_2D(A, N, N, n, n))
 {
@@ -117,22 +144,26 @@ static void kernel_lu(int n, DATA_TYPE POLYBENCH_2D(A, N, N, n, n))
 #ifdef VAL
 static void kernel_lu_val(int n, double A[n][n])
 {
-  int i, j, k;
+  int k, i, j;
 
-  #pragma omp parallel  num_threads(4) private(i, j, k) shared(A,n)
+  //Mappo una sola volta sia in entrata nella gpu che in uscita
+  #pragma omp target data map(tofrom: A[0:n][0:n])
   {
-    for (k = 0; k < n; k++)
+    for (k = 0; k < n; ++k)
     {
-      #pragma omp for schedule(static) 
-      for (j = k + 1; j < n; j++)
-        A[k][j] = A[k][j] / A[k][k];
 
-      #pragma omp for collapse(2) schedule(static) 
-      for (i = k + 1; i < n; i++)
-        for (j = k + 1; j < n; j++)
+      #pragma omp target teams distribute parallel for thread_limit(256)
+      for (j = k + 1; j < n; ++j) 
+        A[k][j] = A[k][j] / A[k][k];
+      
+    
+      #pragma omp target teams distribute parallel for collapse(2) thread_limit(256)
+      for (i = k + 1; i < n; ++i) 
+        for (j = k + 1; j < n; ++j) 
           A[i][j] = A[i][j] - A[i][k] * A[k][j];
+        
     }
-  }
+  } 
 }
 static void LU_sequenziale(int n, double A[n][n])
 {
