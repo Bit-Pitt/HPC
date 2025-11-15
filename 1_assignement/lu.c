@@ -15,11 +15,20 @@
 static void init_array(int n,
                        DATA_TYPE POLYBENCH_2D(A, N, N, n, n))
 {
+#ifdef DUMMY_MATRIX
+  int i, j;
+
+  for (i = 0; i < n; i++)
+    for (j = 0; j < n; j++)
+	  if (i == j) A[i][j] = 40;
+	  else A[i][j] = 1;
+#else
   int i, j;
 
   for (i = 0; i < n; i++)
     for (j = 0; j < n; j++)
       A[i][j] = ((DATA_TYPE)(i + 1) * (j + 1)) / n;
+#endif
 }
 
 /* DCE code. Must scan the entire live-out data.
@@ -41,6 +50,33 @@ static void print_array(int n,
 }
 
 #include <omp.h>
+
+#define CPU_TASKS
+#ifdef CPU_TASKS
+void kernel_lu(int n, DATA_TYPE A[n][n])
+{
+  int k, i, j;
+
+	//#pragma omp for TODO:Prova
+	//#pragma omp parallel for
+    for (k = 0; k < n; ++k)
+    {
+
+	  //taskloop funziona meglio di task depend
+	  #pragma omp taskloop simd num_tasks(32) // TODO: 32 dovrebbe essere il massimo ottimizzabile, poichè ho massimo 32 thread
+      for (j = k + 1; j < n; ++j) 
+		// #pragma omp task depend(out:A[0:n][0:n])
+        A[k][j] = A[k][j] / A[k][k];
+  
+	  #pragma omp taskloop num_tasks(32) //collapse(2) funziona peggio
+      for (i = k + 1; i < n; ++i) 
+        for (j = k + 1; j < n; ++j) 
+		  // #pragma omp task depend(in:A[0:n][0:n])
+          A[i][j] = A[i][j] - A[i][k] * A[k][j];
+
+	} 
+}
+#endif
 
 #ifdef GPU
 #define NTHREAD_GPU 128
@@ -139,7 +175,6 @@ static void kernel_lu(int n, DATA_TYPE POLYBENCH_2D(A, N, N, n, n))
   }
 }
 #endif
-
 
 #ifdef VAL
 static void kernel_lu_val(int n, double A[n][n])
@@ -245,7 +280,6 @@ int main(int argc, char **argv)
 
   /* Run kernel. */
   kernel_lu(n, POLYBENCH_ARRAY(A));
-  
 
   /* Stop and print timer. */
   polybench_stop_instruments;
