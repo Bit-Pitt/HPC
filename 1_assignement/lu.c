@@ -69,6 +69,29 @@ void kernel_lu(int n, DATA_TYPE A[n][n])
 }
 #endif
 
+#ifdef TASK
+static void kernel_lu(int n, DATA_TYPE POLYBENCH_2D(A, N, N, n, n))
+{
+  int k, i, j;
+
+    for (k = 0; k < n; ++k)
+    {
+
+	  //taskloop funziona meglio di task depend
+	  #pragma omp taskloop simd num_tasks(32) 
+      for (j = k + 1; j < n; ++j) 
+		// #pragma omp task depend(out:A[0:n][0:n])
+        A[k][j] = A[k][j] / A[k][k];
+  
+	  #pragma omp taskloop num_tasks(32) 
+      for (i = k + 1; i < n; ++i) 
+        for (j = k + 1; j < n; ++j) 
+          A[i][j] = A[i][j] - A[i][k] * A[k][j];
+
+	} 
+}
+#endif
+
 #ifdef STATIC
 static void kernel_lu(int n, DATA_TYPE POLYBENCH_2D(A, N, N, n, n))
 {
