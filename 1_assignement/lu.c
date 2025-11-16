@@ -141,10 +141,10 @@ static void kernel_lu(int n, DATA_TYPE POLYBENCH_2D(A, N, N, n, n))
 #endif
 
 
-#ifdef VAL
+#ifdef VAL    
 static void kernel_lu_val(int n, double A[n][n])
 {
-  int k, i, j;
+  int k, i, j;        //copiare la funzione che si vuole validare
 
   //Mappo una sola volta sia in entrata nella gpu che in uscita
   #pragma omp target data map(tofrom: A[0:n][0:n])
@@ -215,10 +215,9 @@ static void validazione(void)
 }
 #endif
 
-//#define VAL
 
 
-// SEQ /  STATIC / DYN / VAL  ==> flag "-DSTATIC" per usare LU con parallelizzazione con static scheduling
+// SEQ /  STATIC / DYN / VAL ...   ==> flag "-DSTATIC" per usare LU con parallelizzazione con static scheduling
 int main(int argc, char **argv)
 {
 
