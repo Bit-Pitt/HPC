@@ -1,6 +1,10 @@
 Membri del team
 Pietro Foggia 216921 314138@studenti.unimore.it
 
+Davide Pedrazzini 218974
+317483@studenti.unimore.it
+
+
 
 
 SCRIPT PER VALIDATION AND PERFORMANCE
