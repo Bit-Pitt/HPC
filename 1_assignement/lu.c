@@ -15,7 +15,7 @@
 static void init_array(int n,
                        DATA_TYPE POLYBENCH_2D(A, N, N, n, n))
 {
-#ifdef DUMMY_MATRIX
+  #ifdef DUMMY_MATRIX
   int i, j;
 
   for (i = 0; i < n; i++)
@@ -51,35 +51,8 @@ static void print_array(int n,
 
 #include <omp.h>
 
-#ifdef CPU_TASKS
-#define GPU_THREADS 128
-void kernel_lu(int n, DATA_TYPE A[n][n])
-{
-  int k, i, j;
-
-    for (k = 0; k < n; ++k)
-    {
-	    //#pragma omp taskloop num_tasks(32) 
-		#pragma omp task depend(out:A[0:n][0:n])
-        for (j = k + 1; j < n; ++j) 
-		  //#pragma omp task depend(out:A[0:n][0:n])
-          A[k][j] = A[k][j] / A[k][k];
-		
-		//#pragma omp taskwait
-	    //#pragma omp taskloop num_tasks(32) 
-		#pragma omp task depend(in:A[0:n][0:n])
-        for (i = k + 1; i < n; ++i) 
-          for (j = k + 1; j < n; ++j) 
-		    //#pragma omp task depend(in:A[0:n][0:n])
-            A[i][j] = A[i][j] - A[i][k] * A[k][j];
-		
-	}
-}
-#endif
-
 #ifdef GPU
-#define NTHREAD_GPU 64 // 128
-#define THREAD_LIMIT 64 //256
+#define NTHREAD_GPU 128
 void kernel_lu(int n, DATA_TYPE A[n][n])
 {
   int k, i, j;
@@ -90,14 +63,12 @@ void kernel_lu(int n, DATA_TYPE A[n][n])
     for (k = 0; k < n; ++k)
     {
 
-      #pragma omp target teams distribute parallel for \
-  		num_teams((n + NTHREAD_GPU - 1)/NTHREAD_GPU) // thread_limit(THREAD_LIMIT)
+      #pragma omp target teams distribute parallel for  num_teams((n + NTHREAD_GPU - 1)/NTHREAD_GPU) thread_limit(256)
       for (j = k + 1; j < n; ++j) 
         A[k][j] = A[k][j] / A[k][k];
       
     
-      #pragma omp target teams distribute parallel for \
-	    collapse(2)  num_teams((n + NTHREAD_GPU - 1)/NTHREAD_GPU) // thread_limit(THREAD_LIMIT)
+      #pragma omp target teams distribute parallel  for collapse(2)  num_teams((n + NTHREAD_GPU - 1)/NTHREAD_GPU) thread_limit(256)
       for (i = k + 1; i < n; ++i) 
         for (j = k + 1; j < n; ++j) 
           A[i][j] = A[i][j] - A[i][k] * A[k][j];
@@ -203,6 +174,7 @@ static void kernel_lu(int n, DATA_TYPE POLYBENCH_2D(A, N, N, n, n))
 }
 #endif
 
+
 #ifdef VAL    
 static void kernel_lu_val(int n, double A[n][n])
 {
@@ -306,10 +278,8 @@ int main(int argc, char **argv)
 
   /* Run kernel. */
   kernel_lu(n, POLYBENCH_ARRAY(A));
+  
 
-  #ifdef DUMMY_MATRIX
-  print_array(n, POLYBENCH_ARRAY(A));
-  #endif 
   /* Stop and print timer. */
   polybench_stop_instruments;
   polybench_print_instruments;
