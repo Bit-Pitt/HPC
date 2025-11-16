@@ -51,35 +51,35 @@ static void print_array(int n,
 
 #include <omp.h>
 
-#define CPU_TASKS
 #ifdef CPU_TASKS
+#define GPU_THREADS 128
 void kernel_lu(int n, DATA_TYPE A[n][n])
 {
   int k, i, j;
 
-	//#pragma omp for TODO:Prova
-	//#pragma omp parallel for
     for (k = 0; k < n; ++k)
     {
-
-	  //taskloop funziona meglio di task depend
-	  #pragma omp taskloop simd num_tasks(32) // TODO: 32 dovrebbe essere il massimo ottimizzabile, poichè ho massimo 32 thread
-      for (j = k + 1; j < n; ++j) 
-		// #pragma omp task depend(out:A[0:n][0:n])
-        A[k][j] = A[k][j] / A[k][k];
-  
-	  #pragma omp taskloop num_tasks(32) //collapse(2) funziona peggio
-      for (i = k + 1; i < n; ++i) 
+	    //#pragma omp taskloop num_tasks(32) 
+		#pragma omp task depend(out:A[0:n][0:n])
         for (j = k + 1; j < n; ++j) 
-		  // #pragma omp task depend(in:A[0:n][0:n])
-          A[i][j] = A[i][j] - A[i][k] * A[k][j];
-
-	} 
+		  //#pragma omp task depend(out:A[0:n][0:n])
+          A[k][j] = A[k][j] / A[k][k];
+		
+		//#pragma omp taskwait
+	    //#pragma omp taskloop num_tasks(32) 
+		#pragma omp task depend(in:A[0:n][0:n])
+        for (i = k + 1; i < n; ++i) 
+          for (j = k + 1; j < n; ++j) 
+		    //#pragma omp task depend(in:A[0:n][0:n])
+            A[i][j] = A[i][j] - A[i][k] * A[k][j];
+		
+	}
 }
 #endif
 
 #ifdef GPU
-#define NTHREAD_GPU 128
+#define NTHREAD_GPU 64 // 128
+#define THREAD_LIMIT 64 //256
 void kernel_lu(int n, DATA_TYPE A[n][n])
 {
   int k, i, j;
@@ -90,12 +90,14 @@ void kernel_lu(int n, DATA_TYPE A[n][n])
     for (k = 0; k < n; ++k)
     {
 
-      #pragma omp target teams distribute parallel for  num_teams((n + NTHREAD_GPU - 1)/NTHREAD_GPU) thread_limit(256)
+      #pragma omp target teams distribute parallel for \
+  		num_teams((n + NTHREAD_GPU - 1)/NTHREAD_GPU) // thread_limit(THREAD_LIMIT)
       for (j = k + 1; j < n; ++j) 
         A[k][j] = A[k][j] / A[k][k];
       
     
-      #pragma omp target teams distribute parallel  for collapse(2)  num_teams((n + NTHREAD_GPU - 1)/NTHREAD_GPU) thread_limit(256)
+      #pragma omp target teams distribute parallel for \
+	    collapse(2)  num_teams((n + NTHREAD_GPU - 1)/NTHREAD_GPU) // thread_limit(THREAD_LIMIT)
       for (i = k + 1; i < n; ++i) 
         for (j = k + 1; j < n; ++j) 
           A[i][j] = A[i][j] - A[i][k] * A[k][j];
@@ -281,6 +283,9 @@ int main(int argc, char **argv)
   /* Run kernel. */
   kernel_lu(n, POLYBENCH_ARRAY(A));
 
+  #ifdef DUMMY_MATRIX
+  print_array(n, POLYBENCH_ARRAY(A));
+  #endif 
   /* Stop and print timer. */
   polybench_stop_instruments;
   polybench_print_instruments;
