@@ -1,0 +1,13 @@
+--> Matrice A
+dividi a blocchi  (thread grid 32x32),
+
+Kernel:
+-> copy A in shared   (ogni thread copia il suo Aij)
+    --> ciclo n iterazioni gaussiane
+    
+ogni thread computa il suo Aij --> aggiorna la shared mem==> fine ciclo un sync,
+-> ritorni la nuova A
+
+==> possibile opt: 
+usare pinned memory  / UVM,
+dividere in stream
