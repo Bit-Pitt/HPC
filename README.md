@@ -4,7 +4,7 @@ Pietro Foggia 216921 314138@studenti.unimore.it
 
 Davide Pedrazzini 218974 317483@studenti.unimore.it
 
-Mirco piccinini 304472 304472@studenti.unimore.it
+Mirco piccinini 211068 304472@studenti.unimore.it
 
 
 SCRIPT PER VALIDATION AND PERFORMANCE
