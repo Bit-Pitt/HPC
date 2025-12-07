@@ -31,6 +31,13 @@ void init_array(int n, double *A)
             A[i * n + j] = i * n + j+1;
 }
 
+/* Stampa i primi 5 elementi della prima riga */
+void print_first_5(double *A)
+{
+    for (int i = 0; i < 5; i++)
+        printf("%f ", A[i]);
+    printf("\n");
+}
 
 /* Funzione wrapper per chiamare il kernel */
 void kernel_lu_cuda(int n, double *A)
@@ -42,7 +49,9 @@ void kernel_lu_cuda(int n, double *A)
     cudaMalloc((void **)&d_A, size);
 
     // Copia matrice su device
+    #if defined(PAGEABLE) || defined(PINNED)
     cudaMemcpy(d_A, A, size, cudaMemcpyHostToDevice);
+    #endif
 
     // Definizione blocchi e griglie
     dim3 threadsPerBlock(32, 32);
@@ -56,7 +65,9 @@ void kernel_lu_cuda(int n, double *A)
     }
 
     // Copia risultato su host
+    #if defined(PAGEABLE) || defined(PINNED)
     cudaMemcpy(A, d_A, size, cudaMemcpyDeviceToHost);
+    #endif
 
     // Free memoria device
     cudaFree(d_A);
@@ -89,6 +100,9 @@ int confronta_matrici(int n, double *A, double *B, double tol)
     return 1;
 }
 
+
+#ifdef PAGEABLE
+//     PAGEABLE VERSION
 int main()
 {
     int n = 2048; // dimensione della matrice
@@ -143,3 +157,60 @@ int main()
 
     return 0;
 }
+#endif
+
+
+
+
+
+#ifdef UVM              //UVM version
+   int main()
+{
+    int n = 4096;
+    size_t size = n * n * sizeof(double);
+
+    printf("Array dimension: %d\n", n);
+
+    // ======= UVM ALLOCATION =======
+    double *A;
+    double *A_ref;
+
+    cudaMallocManaged(&A, size);
+    cudaMallocManaged(&A_ref, size);
+
+    // Inizializzazione CPU
+    init_array(n, A);
+    for (int i = 0; i < n*n; i++)
+        A_ref[i] = A[i];
+
+    // Prefetch della matrice alla GPU  (per performance)
+    cudaMemPrefetchAsync(A, size, 0);
+
+    // ========== GPU ==========
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+    kernel_lu_cuda(n, A); 
+    cudaEventRecord(stop);
+
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
+    double gpu_time_s = milliseconds / 1000.0;
+    printf("Tempo GPU: %f s\n", gpu_time_s);
+
+    // Prefetch alla CPU (per la validazione)
+    cudaMemPrefetchAsync(A, size, cudaCpuDeviceId);
+    cudaDeviceSynchronize();
+
+    // Liberazione UVM
+    cudaFree(A);
+    cudaFree(A_ref);
+
+    return 0;
+}
+
+#endif
