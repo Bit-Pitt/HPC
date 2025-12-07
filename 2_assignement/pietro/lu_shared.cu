@@ -10,7 +10,37 @@
 #define N 2048
 #endif
 
+//versione con shared mem
+__global__ void lu_kernel_shared(int n, double *A, int k)
+{
+    int j = blockIdx.x * blockDim.x + threadIdx.x +(k+1);   
+    int i = blockIdx.y * blockDim.y + threadIdx.y +(k+1);
 
+    if (i >= n || j >= n)
+        return; // thread fuori dalla submatrix
+
+    __shared__ double pivot_row[BLOCK_SIZE]; 
+    __shared__ double pivot_col[BLOCK_SIZE];  
+   
+    if (threadIdx.y == 0  && j < n) 
+    {
+        if (j < n)
+            pivot_row[threadIdx.x] = A[k*n + j];              
+    }
+
+
+    if (threadIdx.x == 0 && i < n)
+    {
+        if (i < n)
+            pivot_col[threadIdx.y] = A[i*n + k];       
+    }
+
+  
+    double Aik = pivot_col[threadIdx.y];  
+    double Akj = pivot_row[threadIdx.x];  
+    A[i*n + j] -= Aik * Akj;
+    
+}
 
 //Kernel 1D
 __global__ void kernel_mul(int n, double* A, int k)
@@ -27,17 +57,6 @@ __global__ void kernel_mul(int n, double* A, int k)
     }
 }
 
-// per la sottomatrice  (versione senza shared mem)
-__global__ void kernel_lu(int n, double *A, int k)
-{
-    int j = blockIdx.x * blockDim.x + threadIdx.x + (k+1);      
-    int i = blockIdx.y * blockDim.y + threadIdx.y + (k+1);
-
-    if (i < n && j < n)     
-    {
-        A[i*n + j] -= A[i*n + k] * A[k*n + j];
-    }
-}
 
 
 
