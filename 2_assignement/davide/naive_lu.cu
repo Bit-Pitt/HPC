@@ -7,8 +7,6 @@
 #include <polybench.h>
 #include "lu.h"
 
-#define PAGEABLE
-
 extern "C" void* polybench_alloc_data(long long, int);
 
 
@@ -256,20 +254,11 @@ int main()
     cudaMemPrefetchAsync(A, size, 0);
 
     // ========== GPU ==========
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-
-    cudaEventRecord(start);
+     polybench_start_instruments;
     kernel_lu_cuda(n, POLYBENCH_ARRAY(A)); 
-    cudaEventRecord(stop);
-
-    cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-
-    double gpu_time_s = milliseconds / 1000.0;
-    printf("Tempo GPU: %f s\n", gpu_time_s);
+    polybench_stop_instruments;
+    printf("Tempo GPU: ");
+    polybench_print_instruments;
 
     // Prefetch alla CPU (per la validazione)
     cudaMemPrefetchAsync(A, size, cudaCpuDeviceId);
