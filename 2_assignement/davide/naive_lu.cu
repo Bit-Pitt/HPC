@@ -4,22 +4,29 @@
 #include <cuda_runtime.h>
 #include <cuda_runtime.h>
 
+#define BLOCK_SIZE 32
+
 #include <polybench.h>
 #include "lu.h"
 
 extern "C" void* polybench_alloc_data(long long, int);
 
 
-__global__ void lu_kernel(int n, double *A, int k)
+//Kernel per i moltiplicatori
+__global__ void kernel_mul(int n, double* A, int k)
 {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     int i = blockIdx.y * blockDim.y + threadIdx.y;
+    double pivot = A[k*n + k];
+    // moltiplicatori
+    if (j == k && i > k && i < n)
+        A[i*n + k] /= pivot;
+}
 
-    //  moltiplicatori
-    if (i == k && j > k && j < n)
-        A[k*n + j] /= A[k*n + k];
-
-    __syncthreads(); // sincronizzazione tra thread del blocco 
+__global__ void lu_kernel_base(int n, double *A, int k)
+{
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
 
     // Aggiornamento sotto-matrice
     if (i > k && i < n && j > k && j < n)
@@ -27,6 +34,7 @@ __global__ void lu_kernel(int n, double *A, int k)
 }
 
 
+/* Inizializza la matrice */
 static void init_array(int n,
                        DATA_TYPE POLYBENCH_2D(A, N, N, n, n))
 {
@@ -45,7 +53,6 @@ static void init_array(int n,
       A[i][j] = ((DATA_TYPE)(i + 1) * (j + 1)) / n;
 #endif
 }
-
 
 /* DCE code. Must scan the entire live-out data.
    Can be used also to check the correctness of the output. */
@@ -66,24 +73,8 @@ static void print_array(int n,
 }
 
 
-/* Inizializza la matrice */
-//void init_array(int n, double *A)
-//{
-//    for (int i = 0; i < n; i++)
-//        for (int j = 0; j < n; j++)
-//            A[i * n + j] = i * n + j+1;
-//}
-
-/* Stampa i primi 5 elementi della prima riga */
-void print_first_5(double *A)
-{
-    for (int i = 0; i < 5; i++)
-        printf("%f ", A[i]);
-    printf("\n");
-}
-
 /* Funzione wrapper per chiamare il kernel */
-void kernel_lu_cuda(int n, DATA_TYPE POLYBENCH_2D(A, N, N, n, n)) //OLD: double* A
+void kernel_lu_cuda(int n, double *A)
 {
     double *d_A;
     size_t size = n * n * sizeof(double);
@@ -97,15 +88,20 @@ void kernel_lu_cuda(int n, DATA_TYPE POLYBENCH_2D(A, N, N, n, n)) //OLD: double*
     #endif
 
     // Definizione blocchi e griglie
-    dim3 threadsPerBlock(32, 32);
-    dim3 numBlocks((n + threadsPerBlock.x - 1) / threadsPerBlock.x,
-                   (n + threadsPerBlock.y - 1) / threadsPerBlock.y);
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numBlocks((n + BLOCK_SIZE - 1) / BLOCK_SIZE,
+                   (n + BLOCK_SIZE- 1) / BLOCK_SIZE);
 
-    // Lancio kernel  (uno per ogni iterazione)
-    for (int k = 0; k < n; k++) {
-        lu_kernel<<<numBlocks, threadsPerBlock>>>(n, d_A, k);
-        cudaDeviceSynchronize();  // sincronizzazione globale tra le iterazioni
+    // Lancio kernel  (2 per ogni iterazione)
+    for (int k = 0; k < n; k++)
+    {
+        kernel_mul<<<numBlocks, threadsPerBlock>>>(n, d_A, k);      //kernel per i moltiplicatori
+        cudaDeviceSynchronize();      
+
+        lu_kernel_base<<<numBlocks, threadsPerBlock>>>(n, d_A, k);  //per aggiornamento sottomatrice
+        cudaDeviceSynchronize();      
     }
+
 
     // Copia risultato su host
     #if defined(PAGEABLE) || defined(PINNED)
@@ -121,9 +117,10 @@ void lu_seq(int n, double *A)
 {
     int i, j, k;
     for (k = 0; k < n; k++) {
-        // Divisione della riga k
-        for (j = k + 1; j < n; j++)
-            A[k*n + j] = A[k*n + j] / A[k*n + k];
+
+        //moltiplicatori
+        for (i = k+1; i < n; i++)
+            A[i*n+k] = A[i*n+k] / A[k*n+k];   
 
         // Aggiornamento della matrice
         for (i = k + 1; i < n; i++)
@@ -148,53 +145,38 @@ int confronta_matrici(int n, double *A, double *B, double tol)
 //     PAGEABLE VERSION
 int main()
 {
-	int n = N;
+    int n = N; // dimensione della matrice
     size_t size = n * n * sizeof(DATA_TYPE);
-    //int n = 2048; // dimensione della matrice
-    //printf("Array dimension: %d\n", n);
-	POLYBENCH_2D_ARRAY_DECL(A, DATA_TYPE, N, N, n, n);
+    printf("Array dimension: %d\n", n);
 
     // Allocazione matrici
-    //double *A = (double *)malloc(n * n * sizeof(double));
-    //double *A_lin = (double *)malloc(size); // per gpu
-    double *A_ref = (double *)malloc(size); // per cpu
+    POLYBENCH_2D_ARRAY_DECL(A, DATA_TYPE, N, N, n, n);
+    double *A_ref = (double *)malloc(size);
 
     // Inizializzazione
     init_array(n, POLYBENCH_ARRAY(A));
 
     DATA_TYPE *A_linear_ptr = (DATA_TYPE *)POLYBENCH_ARRAY(A);
-    // Esegui la copia 1D CORRETTA
+    // Esegui la copia 1D per versione sequenziale
     for (int i = 0; i < n * n; i++){
-        A_ref[i] = A_linear_ptr[i]; // Accesso 1D senza errori di tipo
-        //A_lin[i] = A_linear_ptr[i];
+        A_ref[i] = A_linear_ptr[i];
     }
 
-    // Prefetch della matrice alla GPU  (per performance)
-    cudaMemPrefetchAsync(A, size, 0);
-        
+    
     // ================= GPU =================
     polybench_start_instruments;
 
-    kernel_lu_cuda(n, POLYBENCH_ARRAY(A)); //wrapper del kernel
+    kernel_lu_cuda(n, (double*)POLYBENCH_ARRAY(A)); //wrapper del kernel
     polybench_stop_instruments;
     printf("Tempo GPU: ");
     polybench_print_instruments;
-    //printf("Tempo GPU: %f s\n", gpu_time_s);
+
 
     // ================= CPU =================
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-
-    cudaEventRecord(start);
+    clock_t cpu_start = clock();
     lu_seq(n, A_ref); // la versione sequenziale
-    cudaEventRecord(stop);
-
-    cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-
-    double cpu_time_s = milliseconds / 1000.0;
+    clock_t cpu_end = clock();
+    double cpu_time_s = ((double)(cpu_end - cpu_start)) / CLOCKS_PER_SEC;
     printf("Tempo CPU: %f s\n", cpu_time_s);
 
     // Confronto
@@ -206,56 +188,41 @@ int main()
     else
         printf("VALIDAZIONE NON PASSATA\n");
 
-    // Prefetch alla CPU (per la validazione)
-    cudaMemPrefetchAsync(A, size, cudaCpuDeviceId);
-    cudaDeviceSynchronize();
-
     // Free memoria
-    //free(A_lin);
-    free(A_ref);
     POLYBENCH_FREE_ARRAY(A);
+    free(A_ref);
+
     return 0;
 }
 #endif
 
 
-#ifndef N
-	N = 4096
-#endif
+
 
 
 #ifdef UVM              //UVM version
    int main()
 {
-    //int n = 4096;
-	int n = N; 
+    int n = N;
     size_t size = n * n * sizeof(double);
 
-    //printf("Array dimension: %d\n", n);
+    printf("Array dimension: %d\n", n);
 
     // ======= UVM ALLOCATION =======
-    //double *A;
-    double *A_ref;
-
 	POLYBENCH_2D_ARRAY_DECL(A, DATA_TYPE, N, N, n, n);
 
     cudaMallocManaged(&A, size);
-    //cudaMallocManaged(&A_ref, size);
 
     // Inizializzazione CPU
-    //init_array(n, A);
-	init_array(n, POLYBENCH_ARRAY(A));
-	//print_array(n, POLYBENCH_ARRAY(A));
-
-    //for (int i = 0; i < n*n; i++)
-    //    A_ref[i] = A[i];
+    init_array(n, POLYBENCH_ARRAY(A));
+    
 
     // Prefetch della matrice alla GPU  (per performance)
     cudaMemPrefetchAsync(A, size, 0);
 
     // ========== GPU ==========
-     polybench_start_instruments;
-    kernel_lu_cuda(n, POLYBENCH_ARRAY(A)); 
+    polybench_start_instruments;
+    kernel_lu_cuda(n, (double*)POLYBENCH_ARRAY(A)); 
     polybench_stop_instruments;
     printf("Tempo GPU: ");
     polybench_print_instruments;
@@ -266,7 +233,6 @@ int main()
 
     // Liberazione UVM
     cudaFree(A);
-    cudaFree(A_ref);
 
     return 0;
 }
