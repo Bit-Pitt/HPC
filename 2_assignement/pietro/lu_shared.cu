@@ -10,7 +10,7 @@
 #define N 2048
 #endif
 
-//Questo non funziona
+
 __global__ void lu_kernel_shared(int n, double *A, int k)
 {
     int j = blockIdx.x * blockDim.x + threadIdx.x +(k+1);   
