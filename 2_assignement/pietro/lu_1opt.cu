@@ -6,28 +6,39 @@
 
 #define BLOCK_SIZE 32
 
+#ifndef N
+#define N 2048
+#endif
 
 
-//Kernel per i moltiplicatori
+
+//Kernel 1D
 __global__ void kernel_mul(int n, double* A, int k)
 {
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
-    int i = blockIdx.y * blockDim.y + threadIdx.y;
-    double pivot = A[k*n + k];
-    // moltiplicatori
-    if (j == k && i > k && i < n)
+    __shared__ double pivot;
+    int i = blockIdx.x * blockDim.x + threadIdx.x + (k+1);   
+
+    if (threadIdx.x==0)     
+        pivot = A[k*n+k];
+
+    if (i < n)  
+    {   
         A[i*n + k] /= pivot;
+    }
 }
 
-__global__ void lu_kernel_base(int n, double *A, int k)
+// per la sottomatrice  (versione senza shared mem)
+__global__ void kernel_lu(int n, double *A, int k)
 {
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
-    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x + (k+1);      
+    int i = blockIdx.y * blockDim.y + threadIdx.y + (k+1);
 
-    // Aggiornamento sotto-matrice
-    if (i > k && i < n && j > k && j < n)
+    if (i < n && j < n)     
+    {
         A[i*n + j] -= A[i*n + k] * A[k*n + j];
+    }
 }
+
 
 
 /* Inizializza la matrice */
@@ -37,8 +48,6 @@ void init_array(int n, double *A)
         for (int j = 0; j < n; j++)
             A[i * n + j] = i * n + j+1;
 }
-
-
 
 
 /* Funzione wrapper per chiamare il kernel */
@@ -55,21 +64,26 @@ void kernel_lu_cuda(int n, double *A)
     cudaMemcpy(d_A, A, size, cudaMemcpyHostToDevice);
     #endif
 
-    // Definizione blocchi e griglie
-    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 numBlocks((n + BLOCK_SIZE - 1) / BLOCK_SIZE,
-                   (n + BLOCK_SIZE- 1) / BLOCK_SIZE);
+    dim3 threads1D(BLOCK_SIZE);
+    dim3 threads2D(BLOCK_SIZE, BLOCK_SIZE);
 
-    // Lancio kernel  (2 per ogni iterazione)
     for (int k = 0; k < n; k++)
     {
-        kernel_mul<<<numBlocks, threadsPerBlock>>>(n, d_A, k);      //kernel per i moltiplicatori
-        cudaDeviceSynchronize();      
+        int remaining_rows = n - (k + 1);
+        int blocks1D = (remaining_rows + BLOCK_SIZE - 1) / BLOCK_SIZE;     
+        kernel_mul<<<blocks1D, threads1D>>>(n, d_A, k);
+        cudaDeviceSynchronize();
 
-        lu_kernel_base<<<numBlocks, threadsPerBlock>>>(n, d_A, k);  //per aggiornamento sottomatrice
-        cudaDeviceSynchronize();      
+        dim3 blocks2D(
+            (remaining_rows + BLOCK_SIZE - 1) / BLOCK_SIZE,
+            (remaining_rows + BLOCK_SIZE - 1) / BLOCK_SIZE
+        );
+
+        kernel_lu<<<blocks2D, threads2D>>>(n, d_A, k);
+        cudaDeviceSynchronize();
     }
 
+    
 
     // Copia risultato su host
     #if defined(PAGEABLE) || defined(PINNED)
@@ -113,7 +127,7 @@ int confronta_matrici(int n, double *A, double *B, double tol)
 //     PAGEABLE VERSION
 int main()
 {
-    int n = 2048; // dimensione della matrice
+    int n = N; // dimensione della matrice
     printf("Array dimension: %d\n", n);
 
     // Allocazione matrici
@@ -169,12 +183,60 @@ int main()
 
 
 
+#ifdef PINNED
+int main()
+{
+    int n = N; // dimensione della matrice 
+    printf("Array dimension: %d\n", n);
+
+    // -----------------------------
+    // Allocazione matrici PINNED
+    // -----------------------------
+    double *A, *A_ref;
+    cudaMallocHost((void **)&A, n * n * sizeof(double));
+    cudaMallocHost((void **)&A_ref, n * n * sizeof(double));
+
+    // Inizializzazione
+    init_array(n, A);
+
+    // Copia per versione sequenziale
+    for (int i = 0; i < n * n; i++)
+        A_ref[i] = A[i];
+
+    // ================= GPU =================
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+    kernel_lu_cuda(n, A); //wrapper del kernel
+    cudaEventRecord(stop);
+
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    double gpu_time_s = milliseconds / 1000.0;  // converti in secondi
+    printf("Tempo GPU: %f s\n", gpu_time_s);
+
+
+    // -----------------------------
+    // Free memoria PINNED
+    // -----------------------------
+    cudaFreeHost(A);
+    cudaFreeHost(A_ref);
+
+    return 0;
+}
+#endif
+
+
+
 
 
 #ifdef UVM              //UVM version
    int main()
 {
-    int n = 4096;
+    int n = N;
     size_t size = n * n * sizeof(double);
 
     printf("Array dimension: %d\n", n);
